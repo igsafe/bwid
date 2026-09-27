@@ -15,6 +15,7 @@ package bwid
 import (
 	"crypto/rand"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -67,19 +68,99 @@ func timestampPrefix(now time.Time, room int) string {
 	return p
 }
 
+// nextTick returns the seconds+nanoseconds prefix one nanosecond after p.
+func nextTick(p string) string {
+	sec := B62Decode(p[:TIMESTAMP_LEN])
+	nsec := B62Decode(p[TIMESTAMP_LEN:]) + 1
+	if nsec == int64(time.Second) {
+		sec, nsec = sec+1, 0
+	}
+	return B62EncodeFixed(sec, TIMESTAMP_LEN) + B62EncodeFixed(nsec, TIMESTAMP_NANO_LEN)
+}
+
+// clock is time.Now, replaceable in tests
+var clock = time.Now
+
+// monotonicHeadLen is how many leading random digits are incremented for a
+// same-tick token; see monotonic.
+const monotonicHeadLen = 2
+
+// monotonic holds the last full-layout timestamped token issued for each
+// length, so the next one can be guaranteed to sort after it.
+//
+// What it's for: without it, two tokens made in the same clock tick come out
+// in random order, and a clock step backward (e.g. an NTP correction) can make
+// a new token sort before an old one. With it, every token from this process
+// sorts after the previous one, so sorting by ID gives creation order and
+// "everything newer than X" queries can't miss a token from this process.
+//
+// How: if the clock hasn't moved past the last token's timestamp, reuse that
+// timestamp, add 1 to the first monotonicHeadLen random digits, and redraw
+// the rest. The bumped head alone makes the token sort after the last one,
+// so the tail stays unpredictable (10 fresh digits, ~59 bits, for object
+// IDs). Each tick allows ~1,900 bumps on average before moving on to the
+// next nanosecond. Only same-tick tokens are affected; the first token in
+// each tick is fully random. Same-tick tokens are rare on Linux, where a tick
+// is tens of nanoseconds, but common on macOS's microsecond clock.
+//
+// Limits: the guarantee is per process and is lost on restart. Across
+// processes or hosts, tokens are only ordered as well as their clocks agree.
+// After a clock step backward, tokens keep the last timestamp until real time
+// catches up, so the time inside them is briefly stale.
+var monotonic = struct {
+	sync.Mutex
+	last map[int]string
+}{last: map[int]string{}}
+
 // GenerateTimestampedToken returns a token of length characters that sorts
 // by creation time: TIMESTAMP_LEN digits of Unix seconds, then
 // TIMESTAMP_NANO_LEN digits of nanoseconds, then random characters.
 //
+// Within one process, each token of a given length sorts after the previous
+// one, even when made in the same clock tick or after the clock steps
+// backward. Across processes or hosts, tokens are ordered only as well as
+// their clocks agree.
+//
 // Lengths shorter than TIMESTAMP_LEN+TIMESTAMP_NANO_LEN+1 (13) omit the
-// nanoseconds, as in 1.0.x. It panics if length is less than
-// TIMESTAMP_LEN+1 (7).
+// nanoseconds and the ordering guarantee, and are fully random after the
+// seconds, as in 1.0.x. It panics if length is less than TIMESTAMP_LEN+1 (7).
 func GenerateTimestampedToken(length int) string {
 	if length < TIMESTAMP_LEN+1 {
 		panic(fmt.Errorf("minimum timestamped token length is %d", TIMESTAMP_LEN+1))
 	}
-	p := timestampPrefix(time.Now(), length)
-	return p + GenerateToken(length-len(p))
+	if length <= TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		// seconds-only layout: a tick would be a whole second, so keep
+		// these fully random rather than sequential
+		p := timestampPrefix(clock(), length)
+		return p + GenerateToken(length-len(p))
+	}
+	monotonic.Lock()
+	defer monotonic.Unlock()
+	p := timestampPrefix(clock(), length)
+	var token string
+	last, ok := monotonic.last[length]
+	if ok && p <= last[:len(p)] {
+		// same tick as the last token, or the clock went backward:
+		// keep the last timestamp, add 1 to the first monotonicHeadLen
+		// random digits, and redraw the rest
+		p = last[:len(p)]
+		hlen := monotonicHeadLen
+		if hlen > length-len(p) {
+			hlen = length - len(p)
+		}
+		head := incrementB62(last[len(p) : len(p)+hlen])
+		if len(head) > hlen {
+			// head overflowed; move to the next tick with fresh randomness
+			p = nextTick(p)
+			token = p + GenerateToken(length-len(p))
+		} else {
+			token = p + head + GenerateToken(length-len(p)-hlen)
+		}
+	} else {
+		token = p + GenerateToken(length-len(p))
+	}
+	monotonic.last[length] = token
+	return token
 }
 
 // GenerateObjectId returns a 24-character timestamped token: 6 characters of
