@@ -18,6 +18,23 @@ is in order.
 UUIDv7 now solves the same problem as a standard; see
 [bwid or UUIDv7?](#bwid-or-uuidv7) below.
 
+## Usage
+
+```sh
+go get github.com/igsafe/bwid
+```
+
+```go
+import "github.com/igsafe/bwid"
+
+id := bwid.GenerateObjectId()            // "1xAv1A10Hqhcpx67H8f38d7r"
+ids := bwid.GenerateBulkSeqObjectId(500) // 500 IDs, in sorted order
+secret := bwid.GenerateToken(22)         // random only, for secrets
+```
+
+Store IDs in a byte-wise collated column so they sort correctly; see
+[bwid or UUIDv7?](#bwid-or-uuidv7) for column types.
+
 ## Timestamped token layout
 
 `GenerateObjectId()` returns a 24-character base62 token (`0-9A-Za-z`, in
