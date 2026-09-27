@@ -28,6 +28,11 @@ short-length fallback, and validation against `math/big` and fuzzing.
 - Base62 encoding rewritten, with tests checked against `math/big` and a fuzz
   test.
 
+### Fixed
+- `GenerateToken` (and everything built on it) now panics if `crypto/rand`
+  fails, instead of silently returning non-random tokens. This could only
+  happen on Go versions before 1.24.
+
 ## 1.0.1 (2023-04-18)
 
 ### Added

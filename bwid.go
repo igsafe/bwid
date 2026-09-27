@@ -39,7 +39,11 @@ const TIMESTAMP_NANO_LEN = 6
 
 func GenerateToken(length int) string {
 	b := make([]byte, length)
-	rand.Read(b)
+	// never fails on Go 1.24+, but can on older versions if the OS
+	// random source is unavailable; never return non-random tokens
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Errorf("bwid: crypto/rand failed: %w", err))
+	}
 	for i := 0; i < length; i++ {
 		b[i] = B62_DIGITS[int(b[i])%62]
 	}
