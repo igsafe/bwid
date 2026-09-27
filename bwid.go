@@ -24,7 +24,18 @@ const B62_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 // number of base62 digits required to hold timestamp prefixes
 // (6 digits holds unix seconds until the year 3769)
 const TIMESTAMP_LEN = 6
-const TIMESTAMP_MICRO_LEN = 4
+
+// number of base62 digits for the sub-second part of the timestamp
+// (6 digits holds 0-999999999 nanoseconds)
+//
+// new in 1.1.0— resolution depends on the platform's wall clock—
+//   - Linux: true nanoseconds
+//   - macOS: microseconds (the last 3 decimal digits are always 0)
+//   - Windows: typically 100ns steps, coarser on older systems
+//
+// the layout is the same on every platform, so tokens from different
+// hosts still sort together; only the precision of the ordering differs.
+const TIMESTAMP_NANO_LEN = 6
 
 func GenerateToken(length int) string {
 	b := make([]byte, length)
@@ -35,20 +46,24 @@ func GenerateToken(length int) string {
 	return string(b)
 }
 
-func GenerateTimestampedToken(length int) string {
-	now := time.Now()
-	dsec := B62EncodeFixed(now.Unix(), TIMESTAMP_LEN)
-	// new in 1.1.0—  encode the microseconds as next 4 digits for further
-	// index write order accuracy.
-	// the whole timestamp could be done in 9 digits if combined
-	// but i don't want to change the appearance of these tokens
-	// right now.
-	dmic := B62EncodeFixed(now.UnixMicro()%1000000, TIMESTAMP_MICRO_LEN)
-	tlen := length - TIMESTAMP_LEN - TIMESTAMP_MICRO_LEN
-	if tlen < 1 {
-		panic(fmt.Errorf("minimum timestamped token length is %d", TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN+1))
+// timestampPrefix encodes now as seconds, followed by nanoseconds when
+// room leaves space for at least one more digit.  shorter tokens fall
+// back to seconds only, as in 1.0.x, so existing lengths keep working.
+// a given room always produces the same layout.
+func timestampPrefix(now time.Time, room int) string {
+	p := B62EncodeFixed(now.Unix(), TIMESTAMP_LEN)
+	if room > TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		p += B62EncodeFixed(int64(now.Nanosecond()), TIMESTAMP_NANO_LEN)
 	}
-	return dsec + dmic + GenerateToken(tlen)
+	return p
+}
+
+func GenerateTimestampedToken(length int) string {
+	if length < TIMESTAMP_LEN+1 {
+		panic(fmt.Errorf("minimum timestamped token length is %d", TIMESTAMP_LEN+1))
+	}
+	p := timestampPrefix(time.Now(), length)
+	return p + GenerateToken(length-len(p))
 }
 
 func GenerateObjectId() string {
@@ -56,17 +71,15 @@ func GenerateObjectId() string {
 }
 
 func GenerateBulkSeqTimestampedToken(count int64, length int) []string {
-	now := time.Now()
-	dsec := B62EncodeFixed(now.Unix(), TIMESTAMP_LEN)
-	dmic := B62EncodeFixed(now.UnixMicro()%1000000, TIMESTAMP_MICRO_LEN)
-	o := make([]string, count)
 	ilen := B62Len(count)
-	tlen := length - TIMESTAMP_LEN - TIMESTAMP_MICRO_LEN - ilen
-	if tlen < 1 {
-		panic(fmt.Errorf("minimum timestamped token length for %d count is %d", count, (TIMESTAMP_LEN + TIMESTAMP_MICRO_LEN + ilen + 1)))
+	if length < TIMESTAMP_LEN+ilen+1 {
+		panic(fmt.Errorf("minimum timestamped token length for %d count is %d", count, (TIMESTAMP_LEN + ilen + 1)))
 	}
+	p := timestampPrefix(time.Now(), length-ilen)
+	tlen := length - len(p) - ilen
+	o := make([]string, count)
 	for i := int64(0); i < count; i++ {
-		o[i] = dsec + dmic + B62EncodeFixed(i, ilen) + GenerateToken(tlen)
+		o[i] = p + B62EncodeFixed(i, ilen) + GenerateToken(tlen)
 	}
 	return o
 }
