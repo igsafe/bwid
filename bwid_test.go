@@ -18,12 +18,14 @@ func extractBorder(token string, digits int) string {
 	return token[TIMESTAMP_LEN+TIMESTAMP_NANO_LEN : TIMESTAMP_LEN+TIMESTAMP_NANO_LEN+digits]
 }
 
-func assertTimestampedTokenIsNow(t *testing.T, token string) {
+// assertTimestampedTokenBetween checks the token's seconds fall within
+// unix times read just before and just after generating it
+func assertTimestampedTokenBetween(t *testing.T, token string, before, after int64) {
 	t.Helper()
-	now := time.Now().Format("2006-01-02T15:04")
 	dsec := B62Decode(token[:TIMESTAMP_LEN])
-	tokenTime := time.Unix(dsec, 0)
-	assertEqual(t, now, tokenTime.Format("2006-01-02T15:04"))
+	if dsec < before || dsec > after {
+		t.Errorf("expected token seconds between %d and %d, got %d", before, after, dsec)
+	}
 }
 
 func assertGte(t *testing.T, expectedGte, expectedLt string) {
@@ -88,9 +90,11 @@ func TestGenerateTimestampedTokenShortFallback(t *testing.T) {
 	// shorter than seconds + nanoseconds + 1 random digit falls back
 	// to seconds only, as in 1.0.x
 	for length := TIMESTAMP_LEN + 1; length <= TIMESTAMP_LEN+TIMESTAMP_NANO_LEN+1; length++ {
+		before := time.Now().Unix()
 		token := GenerateTimestampedToken(length)
+		after := time.Now().Unix()
 		assertEqual(t, length, len(token))
-		assertTimestampedTokenIsNow(t, token)
+		assertTimestampedTokenBetween(t, token, before, after)
 	}
 	assertPanics(t, func() { GenerateTimestampedToken(TIMESTAMP_LEN) })
 }
@@ -108,10 +112,12 @@ func TestTimestampPrefix(t *testing.T) {
 
 func TestGenerateBulkSeqTimestampedTokenShortFallback(t *testing.T) {
 	// 100 needs 2 order digits
+	before := time.Now().Unix()
 	tokens := GenerateBulkSeqTimestampedToken(100, TIMESTAMP_LEN+2+1)
+	after := time.Now().Unix()
 	for i, token := range tokens {
 		assertEqual(t, TIMESTAMP_LEN+2+1, len(token))
-		assertTimestampedTokenIsNow(t, token)
+		assertTimestampedTokenBetween(t, token, before, after)
 		assertEqual(t, int64(i), B62Decode(token[TIMESTAMP_LEN:TIMESTAMP_LEN+2]))
 	}
 	assertPanics(t, func() { GenerateBulkSeqTimestampedToken(100, TIMESTAMP_LEN+2) })
@@ -120,8 +126,10 @@ func TestGenerateBulkSeqTimestampedTokenShortFallback(t *testing.T) {
 func TestGenerateTimestampedToken(t *testing.T) {
 	var prevToken string
 	for i := 0; i < 100000; i++ {
+		before := time.Now().Unix()
 		token := GenerateTimestampedToken(24)
-		assertTimestampedTokenIsNow(t, token)
+		after := time.Now().Unix()
+		assertTimestampedTokenBetween(t, token, before, after)
 		if prevToken != "" {
 			assertTimestampedTokenOrder(t, token, prevToken)
 		}
@@ -141,14 +149,16 @@ func TestGenerateTimestampedToken(t *testing.T) {
 func TestGenerateBulkSeqTimestampedToken(t *testing.T) {
 	var count int64 = 100000
 	var tokenLen = 40
+	before := time.Now().Unix()
 	tokens := GenerateBulkSeqTimestampedToken(count, tokenLen)
+	after := time.Now().Unix()
 	log.Printf("GenerateBulkSeqTimestampedToken(n, %d)[0] %s", tokenLen, tokens[0])
 	assertEqual(t, count, int64(len(tokens)))
 	var prevToken string
 	orderDigits := B62Len(count)
 	for i, token := range tokens {
 		assertEqual(t, tokenLen, len(token))
-		assertTimestampedTokenIsNow(t, token)
+		assertTimestampedTokenBetween(t, token, before, after)
 		if prevToken != "" {
 			assertTimestampedTokenOrder(t, token, prevToken)
 		}
