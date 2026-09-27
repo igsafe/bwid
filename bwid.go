@@ -15,6 +15,7 @@ package bwid
 import (
 	"crypto/rand"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -43,16 +44,34 @@ const TIMESTAMP_NANO_LEN = 6
 // 22 characters gives about 131 bits of randomness. It panics if crypto/rand
 // fails.
 func GenerateToken(length int) string {
-	b := make([]byte, length)
-	// never fails on Go 1.24+, but can on older versions if the OS
-	// random source is unavailable; never return non-random tokens
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Errorf("bwid: crypto/rand failed: %w", err))
+	o := make([]byte, 0, length)
+	// ~3% of bytes are rejected, so a little extra usually fills it in one read
+	buf := make([]byte, length+length/16+4)
+	for len(o) < length {
+		// never fails on Go 1.24+, but can on older versions if the OS
+		// random source is unavailable; never return non-random tokens
+		if _, err := rand.Read(buf); err != nil {
+			panic(fmt.Errorf("bwid: crypto/rand failed: %w", err))
+		}
+		o = appendB62Uniform(o, buf, length)
 	}
-	for i := 0; i < length; i++ {
-		b[i] = B62_DIGITS[int(b[i])%62]
+	return string(o)
+}
+
+// appendB62Uniform appends base62 characters from random bytes in src to dst,
+// up to max total. Bytes 248-255 are skipped: 248 is 4*62, so every character
+// comes from exactly 4 byte values and all 62 are equally likely. (Using
+// every byte with %62 would make 0-7 slightly more likely than the rest.)
+func appendB62Uniform(dst, src []byte, max int) []byte {
+	for _, b := range src {
+		if len(dst) == max {
+			break
+		}
+		if b < 248 {
+			dst = append(dst, B62_DIGITS[b%62])
+		}
 	}
-	return string(b)
+	return dst
 }
 
 // timestampPrefix encodes now as seconds, followed by nanoseconds when
@@ -67,26 +86,151 @@ func timestampPrefix(now time.Time, room int) string {
 	return p
 }
 
+// nextTick returns the seconds+nanoseconds prefix one nanosecond after p.
+func nextTick(p string) string {
+	sec := B62Decode(p[:TIMESTAMP_LEN])
+	nsec := B62Decode(p[TIMESTAMP_LEN:]) + 1
+	if nsec == int64(time.Second) {
+		sec, nsec = sec+1, 0
+	}
+	return B62EncodeFixed(sec, TIMESTAMP_LEN) + B62EncodeFixed(nsec, TIMESTAMP_NANO_LEN)
+}
+
+// clock is time.Now, replaceable in tests
+var clock = time.Now
+
+// monotonicHeadLen is how many leading random digits are incremented for a
+// same-tick token; see monotonic.
+const monotonicHeadLen = 2
+
+// monotonic holds the last full-layout timestamped token issued for each
+// length, so the next one can be guaranteed to sort after it.
+//
+// What it's for: without it, two tokens made in the same clock tick come out
+// in random order, and a clock step backward (e.g. an NTP correction) can make
+// a new token sort before an old one. With it, every token from this process
+// sorts after the previous one, so sorting by ID gives creation order and
+// "everything newer than X" queries can't miss a token from this process.
+//
+// How: if the clock hasn't moved past the last token's timestamp, reuse that
+// timestamp, add 1 to the first monotonicHeadLen random digits, and redraw
+// the rest. The bumped head alone makes the token sort after the last one,
+// so the tail stays unpredictable (10 fresh digits, ~59 bits, for object
+// IDs). Each tick allows ~1,900 bumps on average before moving on to the
+// next nanosecond. Only same-tick tokens are affected; the first token in
+// each tick is fully random. Same-tick tokens are rare on Linux, where a tick
+// is tens of nanoseconds, but common on macOS's microsecond clock.
+//
+// Limits: the guarantee is per process and is lost on restart. Across
+// processes or hosts, tokens are only ordered as well as their clocks agree.
+// After a clock step backward, tokens keep the last timestamp until real time
+// catches up, so the time inside them is briefly stale.
+var monotonic = struct {
+	sync.Mutex
+	last map[int]string
+}{last: map[int]string{}}
+
 // GenerateTimestampedToken returns a token of length characters that sorts
 // by creation time: TIMESTAMP_LEN digits of Unix seconds, then
 // TIMESTAMP_NANO_LEN digits of nanoseconds, then random characters.
 //
+// Within one process, each token of a given length sorts after the previous
+// one, even when made in the same clock tick or after the clock steps
+// backward. Across processes or hosts, tokens are ordered only as well as
+// their clocks agree.
+//
 // Lengths shorter than TIMESTAMP_LEN+TIMESTAMP_NANO_LEN+1 (13) omit the
-// nanoseconds, as in 1.0.x. It panics if length is less than
-// TIMESTAMP_LEN+1 (7).
+// nanoseconds and the ordering guarantee, and are fully random after the
+// seconds, as in 1.0.x. It panics if length is less than TIMESTAMP_LEN+1 (7).
 func GenerateTimestampedToken(length int) string {
 	if length < TIMESTAMP_LEN+1 {
 		panic(fmt.Errorf("minimum timestamped token length is %d", TIMESTAMP_LEN+1))
 	}
-	p := timestampPrefix(time.Now(), length)
-	return p + GenerateToken(length-len(p))
+	if length <= TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		// seconds-only layout: a tick would be a whole second, so keep
+		// these fully random rather than sequential
+		p := timestampPrefix(clock(), length)
+		return p + GenerateToken(length-len(p))
+	}
+	monotonic.Lock()
+	defer monotonic.Unlock()
+	p := timestampPrefix(clock(), length)
+	var token string
+	last, ok := monotonic.last[length]
+	if ok && p <= last[:len(p)] {
+		// same tick as the last token, or the clock went backward:
+		// keep the last timestamp, add 1 to the first monotonicHeadLen
+		// random digits, and redraw the rest
+		p = last[:len(p)]
+		hlen := monotonicHeadLen
+		if hlen > length-len(p) {
+			hlen = length - len(p)
+		}
+		head := incrementB62(last[len(p) : len(p)+hlen])
+		if len(head) > hlen {
+			// head overflowed; move to the next tick with fresh randomness
+			p = nextTick(p)
+			token = p + GenerateToken(length-len(p))
+		} else {
+			token = p + head + GenerateToken(length-len(p)-hlen)
+		}
+	} else {
+		token = p + GenerateToken(length-len(p))
+	}
+	monotonic.last[length] = token
+	return token
 }
 
 // GenerateObjectId returns a 24-character timestamped token: 6 characters of
-// seconds, 6 of nanoseconds, and 12 random (about 71 bits). See
-// GenerateTimestampedToken.
+// seconds, 6 of nanoseconds, and 12 random (about 71 bits, or about 59 for an
+// ID made in the same clock tick as the previous one). Within one process,
+// each ID sorts after the previous one. See GenerateTimestampedToken.
 func GenerateObjectId() string {
 	return GenerateTimestampedToken(24)
+}
+
+// ObjectIdTime returns the creation time stored in an object ID, or in any
+// token from GenerateTimestampedToken or GenerateBulkSeqTimestampedToken.
+//
+// The seconds are always exact. Nanoseconds are included when the token has
+// them; precision follows the generating host's clock (see
+// TIMESTAMP_NANO_LEN). IDs from 1.0.x have random characters where the
+// nanoseconds would be; those almost always decode as out of range and are
+// ignored, but about 1 in 57 decodes as a valid value, giving a wrong time
+// within the correct second. The same applies to bulk tokens too short to
+// hold nanoseconds after their index digits.
+//
+// After a clock step backward, IDs keep the last timestamp until the clock
+// catches up (see GenerateTimestampedToken), so their stored time can be
+// briefly behind when they were really created.
+//
+// It panics if id is shorter than TIMESTAMP_LEN, or if the characters it
+// reads contain anything outside B62_DIGITS.
+func ObjectIdTime(id string) time.Time {
+	if len(id) < TIMESTAMP_LEN {
+		panic(fmt.Errorf("bwid: id %q is shorter than %d characters", id, TIMESTAMP_LEN))
+	}
+	stamp := id[:TIMESTAMP_LEN]
+	if len(id) > TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		stamp = id[:TIMESTAMP_LEN+TIMESTAMP_NANO_LEN]
+	}
+	for i := 0; i < len(stamp); i++ {
+		if !isB62(stamp[i]) {
+			panic(fmt.Errorf("bwid: id %q has non-base62 character %q", id, stamp[i]))
+		}
+	}
+	sec := B62Decode(id[:TIMESTAMP_LEN])
+	if len(stamp) > TIMESTAMP_LEN {
+		if nsec := B62Decode(stamp[TIMESTAMP_LEN:]); nsec < int64(time.Second) {
+			return time.Unix(sec, nsec)
+		}
+	}
+	return time.Unix(sec, 0)
+}
+
+// isB62 reports whether c is one of B62_DIGITS.
+func isB62(c byte) bool {
+	return '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z'
 }
 
 // GenerateBulkSeqTimestampedToken returns count tokens of length characters
@@ -94,19 +238,41 @@ func GenerateObjectId() string {
 // timestamp (as in GenerateTimestampedToken), then its index in
 // B62Len(count) base62 digits, then random characters.
 //
-// The nanoseconds are omitted when length leaves no room for them after the
-// index digits. It panics if length is less than
+// Batches share ordering with GenerateTimestampedToken of the same length:
+// within one process, a batch sorts after every token issued before it, and
+// tokens issued after it sort after the whole batch. If the clock hasn't
+// moved past the last token issued, the batch uses the nanosecond after it.
+//
+// The nanoseconds, and the ordering guarantee, are omitted when length leaves
+// no room for them after the index digits. It panics if length is less than
 // TIMESTAMP_LEN+B62Len(count)+1. count must not be negative.
 func GenerateBulkSeqTimestampedToken(count int64, length int) []string {
 	ilen := B62Len(count)
 	if length < TIMESTAMP_LEN+ilen+1 {
 		panic(fmt.Errorf("minimum timestamped token length for %d count is %d", count, (TIMESTAMP_LEN + ilen + 1)))
 	}
-	p := timestampPrefix(time.Now(), length-ilen)
+	room := length - ilen
+	var p string
+	if room <= TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		// seconds-only layout: stateless, as in 1.0.x
+		p = timestampPrefix(clock(), room)
+	} else {
+		monotonic.Lock()
+		defer monotonic.Unlock()
+		p = timestampPrefix(clock(), room)
+		if last, ok := monotonic.last[length]; ok && p <= last[:len(p)] {
+			// not past the last token: take the next nanosecond, so every
+			// token in the batch sorts after it
+			p = nextTick(last[:len(p)])
+		}
+	}
 	tlen := length - len(p) - ilen
 	o := make([]string, count)
 	for i := int64(0); i < count; i++ {
 		o[i] = p + B62EncodeFixed(i, ilen) + GenerateToken(tlen)
+	}
+	if count > 0 && len(p) > TIMESTAMP_LEN {
+		monotonic.last[length] = o[count-1]
 	}
 	return o
 }

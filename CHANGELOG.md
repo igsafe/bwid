@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.2.0 (2026-09-27)
+
+Backward compatible: no signatures change, and the token layout is the same
+as 1.1.0.
+
+Developed by Claude Opus 5.5 (Anthropic) in Claude Code, including the
+monotonic ordering design (with changes from human operator), its tests and
+sabotage checks, and the modulo-bias fix.
+
+### Added
+- Guaranteed ordering within a process: every `GenerateObjectId` and
+  `GenerateTimestampedToken` (13+ characters) sorts after the previous one of
+  the same length, including across goroutines and after the clock steps
+  backward. Same-tick IDs bump their first 2 random characters and redraw the
+  rest, so they stay unpredictable (~59 bits).
+- `ObjectIdTime(id)`: returns the time stored in an ID, with nanoseconds when
+  present. Panics on invalid input.
+
+### Changed
+- Bulk batches share ordering with single IDs of the same length: a batch
+  sorts after everything issued before it, and later IDs sort after the whole
+  batch. A batch made in the same clock tick as the last ID takes the next
+  nanosecond.
+- Tokens of 7–12 characters are unchanged: fully random after the seconds, as
+  in 1.0.x, with no ordering guarantee.
+- CI runs the tests with the race detector.
+
+### Fixed
+- `GenerateToken` (and the random part of every token) is now uniform. It
+  used `byte % 62`, which made `0`–`7` 25% more likely than other characters;
+  it now rejects bytes 248–255.
+
 ## 1.1.0 (2026-09-27)
 
 Backward compatible: every 1.0.x function keeps its signature and accepts the

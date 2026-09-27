@@ -15,6 +15,10 @@ the random part keeps them unique across hosts.
 batch shares one timestamp and carries a sequence number, so the whole batch
 is in order.
 
+Within one process, ordering is guaranteed: every ID sorts after the one made
+before it, including batches, IDs made in the same clock tick, and IDs made
+after the clock steps backward. See [Ordering guarantees](#ordering-guarantees).
+
 UUIDv7 now solves the same problem as a standard; see
 [bwid or UUIDv7?](#bwid-or-uuidv7) below.
 
@@ -30,6 +34,7 @@ import "github.com/igsafe/bwid"
 id := bwid.GenerateObjectId()            // "1xAv1A10Hqhcpx67H8f38d7r"
 ids := bwid.GenerateBulkSeqObjectId(500) // 500 IDs, in sorted order
 secret := bwid.GenerateToken(22)         // random only, for secrets
+created := bwid.ObjectIdTime(id)         // time.Time stored in the ID
 ```
 
 Store IDs in a byte-wise collated column so they sort correctly; see
@@ -53,6 +58,32 @@ Nanosecond precision depends on the platform's wall clock: true nanoseconds on
 Linux, microseconds on macOS, and typically 100ns steps on Windows. The layout
 is the same everywhere, so tokens from different hosts still sort together.
 
+## Ordering guarantees
+
+As of 1.2.0, **within one process,** each ID sorts after the previous one, so
+sorting by ID gives creation order and "everything newer than X" queries can't
+miss an ID from that process. This holds for `GenerateObjectId`,
+`GenerateTimestampedToken` (13+ characters), and bulk batches of the same
+length, which share ordering with single IDs. It holds across goroutines and
+when the clock steps backward.
+
+How: when the clock hasn't moved past the last ID's timestamp, bwid reuses that
+timestamp, adds 1 to the first 2 random characters, and redraws the other 10,
+so the next ID sorts later but still can't be predicted. Only IDs made in the
+same clock tick as the previous one are affected; that's rare on Linux, but
+common on macOS's microsecond clock.
+
+**Across processes or hosts,** IDs are ordered only as well as the clocks
+agree, and a restarted process starts fresh. Use a single writer (or a
+separate sequence) where strict global order matters.
+
+**After a clock step backward,** IDs keep the last timestamp until real time
+catches up, so for that stretch the time stored in them (see `ObjectIdTime`) is
+behind their real creation time.
+
+Tokens of 7–12 characters don't get the guarantee; they stay fully random after
+the seconds, as in 1.0.x.
+
 ## Entropy compared with UUIDs
 
 | | Length | Random bits | Time-ordered |
@@ -60,7 +91,7 @@ is the same everywhere, so tokens from different hosts still sort together.
 | UUIDv4 | 36 | 122 | no |
 | UUIDv7 | 36 | 74 | milliseconds |
 | `GenerateObjectId()` 1.0.x | 24 | ~107 | seconds |
-| `GenerateObjectId()` 1.1.x | 24 | ~71 | nanoseconds (Linux) |
+| `GenerateObjectId()` 1.1.x+ | 24 | ~71 (~59 same-tick) | nanoseconds (Linux) |
 
 **Collisions:** two object IDs can only collide if they share a timestamp, so
 the random part only has to be unique within one nanosecond (one microsecond
@@ -68,14 +99,16 @@ on macOS). Generating a million IDs per second for 100 years gives at most
 ~5×10⁻⁷ expected collisions. In practice this could be argued as safer than
 UUIDv4, where every ID competes with every other.
 
-**Guessability:** the random part comes from Go's `crypto/rand`, and 71 bits
-clears the 64-bit minimum for session secrets in both
+**Guessability:** the random part comes from Go's `crypto/rand` (uniformly
+since 1.2.0), and 71 bits clears the 64-bit minimum for session secrets in both
 [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b/session/)
 (Session Bindings: "at least 64 bits" from an approved random bit generator) and the
 [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
 ("at least 64 bits of entropy"). OWASP estimates 64 bits takes ~585 years to
 guess at 10,000 guesses per second against 100,000 live sessions; 71 bits is
-128× that. Those minimums assume short-lived session IDs, though, and are well
+128× that. An ID made in the same clock tick as the previous one keeps ~59
+unpredictable bits (see [Ordering guarantees](#ordering-guarantees)), below
+that minimum. Those minimums assume short-lived session IDs, though, and are well
 below the common 128-bit practice for long-lived secrets. Object IDs also
 reveal their creation time. Don't rely on them as secrets (e.g. unlisted
 links); use
@@ -95,10 +128,11 @@ database support, or the smallest index: it stores in 16 bytes, where a bwid
 ID stored as a string takes 24.
 
 **Choose bwid** when you want short, URL-safe string IDs (24 characters vs 36)
-that sort correctly as plain ASCII, finer than millisecond ordering, or
-sequenced bulk batches. The shorter length also carries into JSON, which has
-no binary type, so UUIDs are always sent as 36-character strings. That's a
-third smaller per ID uncompressed, though gzip mostly evens it out.
+that sort correctly as plain ASCII, finer than millisecond ordering,
+guaranteed in-process ordering, or sequenced bulk batches. The shorter length
+also carries into JSON, which has no binary type, so UUIDs are always sent as
+36-character strings. That's a third smaller per ID uncompressed, though gzip
+mostly evens it out.
 
 **Also choose bwid** if you're a 🤠 who just likes taking the scenic route.
 Not every ID has to look like it came from a committee. 🦔  Have some fun.

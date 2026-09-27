@@ -61,6 +61,36 @@ func TestGenerateTokenLen(t *testing.T) {
 	assertEqual(t, 24, len(token))
 }
 
+func TestGenerateTokenLengths(t *testing.T) {
+	for _, length := range []int{0, 1, 22, 1000} {
+		assertB62Token(t, GenerateToken(length), length)
+	}
+}
+
+func TestAppendB62Uniform(t *testing.T) {
+	// feed every possible byte value once
+	src := make([]byte, 256)
+	for i := range src {
+		src[i] = byte(i)
+	}
+	out := appendB62Uniform(nil, src, 1000)
+	// 248-255 are rejected
+	assertEqual(t, 248, len(out))
+	// every character comes from exactly 4 byte values
+	counts := map[byte]int{}
+	for _, c := range out {
+		counts[c]++
+	}
+	assertEqual(t, 62, len(counts))
+	for i := 0; i < len(B62_DIGITS); i++ {
+		assertEqual(t, 4, counts[B62_DIGITS[i]])
+	}
+	// stops at max, and appends to what's already there
+	assertEqual(t, "ab0123", string(appendB62Uniform([]byte("ab"), src, 6)))
+	// all-rejected input adds nothing
+	assertEqual(t, "", string(appendB62Uniform(nil, []byte{248, 255}, 10)))
+}
+
 func TestGenerateTimestampedTokenLen(t *testing.T) {
 	token := GenerateTimestampedToken(24)
 	log.Printf("GenerateTimestampedToken(24) %s", token)
@@ -136,13 +166,9 @@ func TestGenerateTimestampedToken(t *testing.T) {
 		if t.Failed() {
 			return
 		}
+		// no sleep needed: same-tick tokens are ordered by the monotonic
+		// head, even on macOS's microsecond clock
 		prevToken = token
-		// because the string is random after the timestamp,
-		// make sure the timestamp increments at least one microsecond
-		// so order check does not fail on the randomness alone
-		// (microseconds, not nanoseconds, because that's the macOS
-		// wall clock resolution)
-		time.Sleep(time.Microsecond)
 	}
 }
 
@@ -169,4 +195,45 @@ func TestGenerateBulkSeqTimestampedToken(t *testing.T) {
 		}
 		prevToken = token
 	}
+}
+
+func TestObjectIdTimeRoundTrip(t *testing.T) {
+	freezeClock(t, frozenAt)
+	want := frozenAt.UnixNano()
+	assertEqual(t, want, ObjectIdTime(GenerateObjectId()).UnixNano())
+	assertEqual(t, want, ObjectIdTime(GenerateTimestampedToken(13)).UnixNano())
+	assertEqual(t, want+1, ObjectIdTime(GenerateBulkSeqObjectId(5)[4]).UnixNano()) // batch takes the next ns
+}
+
+func TestObjectIdTimeRealClock(t *testing.T) {
+	before := time.Now().UnixNano()
+	id := GenerateObjectId()
+	after := time.Now().UnixNano()
+	got := ObjectIdTime(id).UnixNano()
+	if got < before || got > after {
+		t.Errorf("expected time between %d and %d, got %d", before, after, got)
+	}
+}
+
+func TestObjectIdTimeSecondsOnly(t *testing.T) {
+	sec := B62EncodeFixed(frozenAt.Unix(), TIMESTAMP_LEN)
+	want := frozenAt.Unix() * int64(time.Second)
+	// short token: no nanoseconds stored
+	assertEqual(t, want, ObjectIdTime(sec+"AbCdEf").UnixNano())
+	// 1.0.x ID whose random characters decode as out of range nanoseconds
+	assertEqual(t, want, ObjectIdTime(sec+"zzzzzz"+"AbCdEfGhIjKl").UnixNano())
+	// 1.0.x ID whose random characters happen to decode in range: the
+	// second is still right, the sub-second part is not (documented)
+	got := ObjectIdTime(sec + "000Abc" + "AbCdEfGhIjKl")
+	assertEqual(t, frozenAt.Unix(), got.Unix())
+}
+
+func TestObjectIdTimePanics(t *testing.T) {
+	sec := B62EncodeFixed(frozenAt.Unix(), TIMESTAMP_LEN)
+	assertPanics(t, func() { ObjectIdTime("") })
+	assertPanics(t, func() { ObjectIdTime("1xAv1") })
+	assertPanics(t, func() { ObjectIdTime("1xAv-A10Hqhcpx67H8f38d7r") })
+	assertPanics(t, func() { ObjectIdTime(sec + "10Hq-c" + "px67H8f38d7r") })
+	// characters after the timestamp aren't read, so aren't checked
+	assertEqual(t, frozenAt.Unix(), ObjectIdTime(sec+"------").Unix())
 }

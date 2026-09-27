@@ -3,6 +3,7 @@ package bwid_test
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/igsafe/bwid"
 )
@@ -55,4 +56,12 @@ func ExampleB62Decode() {
 	// Output:
 	// 3971
 	// 62
+}
+
+func ExampleObjectIdTime() {
+	// this ID was made on macOS, so its time stops at microseconds; IDs
+	// made on Linux carry full nanoseconds
+	t := bwid.ObjectIdTime("1xAv1A10Hqhcpx67H8f38d7r")
+	fmt.Println(t.UTC().Format(time.RFC3339Nano))
+	// Output: 2026-09-27T19:58:36.920387Z
 }
