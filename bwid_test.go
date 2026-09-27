@@ -14,7 +14,7 @@ func extractBmic(token string) string {
 	return token[TIMESTAMP_LEN : TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN]
 }
 
-func extractBorder(token string, digits uint64) string {
+func extractBorder(token string, digits int) string {
 	return token[TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN : TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN+digits]
 }
 
@@ -22,8 +22,8 @@ func assertTimestampedTokenIsNow(t *testing.T, token string) {
 	t.Helper()
 	now := time.Now().Format("2006-01-02T15:04")
 	dsec := B62Decode(token[:TIMESTAMP_LEN])
-	tokenTime := time.Unix(int64(dsec), 0)
-	assertEqual(t, tokenTime.Format("2006-01-02T15:04"), now)
+	tokenTime := time.Unix(dsec, 0)
+	assertEqual(t, now, tokenTime.Format("2006-01-02T15:04"))
 }
 
 func assertGte(t *testing.T, expectedGte, expectedLt string) {
@@ -44,12 +44,13 @@ func assertTimestampedTokenOrder(t *testing.T, nextToken string, prevToken strin
 
 func TestUnixTimestampLen(t *testing.T) {
 	// we won't need more digits for a while.  3000 AD, still good!
-	d1 := B62Len(uint64(time.Now().Unix()))
-	d2 := B62Len(uint64(time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
-	assertEqual(t, d1, d2)
-	// 2287 AD no bueno!
-	d3 := B62Len(uint64(time.Date(4000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
-	assertEqual(t, d2+1, d3)
+	assertEqual(t, TIMESTAMP_LEN, B62Len(time.Now().Unix()))
+	assertEqual(t, TIMESTAMP_LEN, B62Len(time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
+	// 3769 AD no bueno!
+	assertEqual(t, TIMESTAMP_LEN, B62Len(time.Date(3769, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
+	assertEqual(t, TIMESTAMP_LEN+1, B62Len(time.Date(3770, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
+	// microseconds always fit
+	assertEqual(t, TIMESTAMP_MICRO_LEN, B62Len(999999))
 }
 
 func TestGenerateTokenLen(t *testing.T) {
@@ -72,6 +73,9 @@ func TestGenerateTimestampedToken(t *testing.T) {
 		if prevToken != "" {
 			assertTimestampedTokenOrder(t, token, prevToken)
 		}
+		if t.Failed() {
+			return
+		}
 		prevToken = token
 		// because the string is random after the timestamp,
 		// make sure the timestamp increments at least one microsecond
@@ -81,21 +85,24 @@ func TestGenerateTimestampedToken(t *testing.T) {
 }
 
 func TestGenerateBulkSeqTimestampedToken(t *testing.T) {
-	var count uint = 100000
-	var tokenLen uint = 40
+	var count int64 = 100000
+	var tokenLen = 40
 	tokens := GenerateBulkSeqTimestampedToken(count, tokenLen)
 	log.Printf("GenerateBulkSeqTimestampedToken(n, %d)[0] %s", tokenLen, tokens[0])
-	assertEqual(t, uint(len(tokens)), count)
+	assertEqual(t, count, int64(len(tokens)))
 	var prevToken string
-	orderDigits := B62Len(uint64(count))
+	orderDigits := B62Len(count)
 	for i, token := range tokens {
-		assertEqual(t, uint(len(token)), tokenLen)
+		assertEqual(t, tokenLen, len(token))
 		assertTimestampedTokenIsNow(t, token)
 		if prevToken != "" {
 			assertTimestampedTokenOrder(t, token, prevToken)
 		}
 		tokenI := B62Decode(extractBorder(token, orderDigits))
-		assertEqual(t, uint64(i), tokenI)
+		assertEqual(t, int64(i), tokenI)
+		if t.Failed() {
+			return
+		}
 		prevToken = token
 	}
 }
