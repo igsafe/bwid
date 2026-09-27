@@ -2,9 +2,9 @@
 
 package bwid
 
-const ZeroDigit = byte(48)
+const zeroDigit = byte(48)
 
-func DecDigitToB62(d int64) byte {
+func decDigitToB62(d int64) byte {
 	// 0-9
 	if d < 10 {
 		return byte(d + 48)
@@ -17,7 +17,7 @@ func DecDigitToB62(d int64) byte {
 	return byte(d + 61)
 }
 
-func B62DigitToDec(b byte) int64 {
+func b62DigitToDec(b byte) int64 {
 	// 0-9
 	if b < 58 {
 		return int64(b) - 48
@@ -31,20 +31,20 @@ func B62DigitToDec(b byte) int64 {
 }
 
 // Increment a Base62 number by 1
-func IncrementB62(v string) string {
+func incrementB62(v string) string {
 	incrementing := true
 	// alloc extra byte in case new place is required
 	v2 := make([]byte, len(v)+1)
 	for i := len(v) - 1; i >= 0; i-- {
 		i2 := i + 1
 		if incrementing {
-			d := B62DigitToDec(v[i])
+			d := b62DigitToDec(v[i])
 			if d == 61 {
 				// adding will overflow, next place
-				v2[i2] = ZeroDigit
+				v2[i2] = zeroDigit
 			} else {
 				// increment this place
-				v2[i2] = DecDigitToB62(d + 1)
+				v2[i2] = decDigitToB62(d + 1)
 				// next place remains the same
 				incrementing = false
 			}
@@ -53,15 +53,15 @@ func IncrementB62(v string) string {
 		}
 	}
 	if incrementing {
-		v2[0] = DecDigitToB62(1)
+		v2[0] = decDigitToB62(1)
 		return string(v2)
 	}
 	return string(v2[1:])
 }
 
-// B62EncodeSpec returns the highest place divisor d and the
+// b62EncodeSpec returns the highest place divisor d and the
 // total number of places pt for the base62 encoding of n.
-func B62EncodeSpec(n int64) (d int64, pt int) {
+func b62EncodeSpec(n int64) (d int64, pt int) {
 	d = 1
 	pt = 1
 	// d <= n/62 avoids overflowing d*62
@@ -74,19 +74,19 @@ func B62EncodeSpec(n int64) (d int64, pt int) {
 
 // B62Len returns the number of base62 digits required to hold n.
 func B62Len(n int64) int {
-	_, pt := B62EncodeSpec(n)
+	_, pt := b62EncodeSpec(n)
 	return pt
 }
 
 // Encode to base62
 // See also math proofs in b62_test.go
 func B62Encode(n int64) string {
-	d, pt := B62EncodeSpec(n)
+	d, pt := b62EncodeSpec(n)
 	o := make([]byte, pt)
 	pi := 0 // place idx
 	for {
 		decv := n / d
-		o[pi] = DecDigitToB62(decv)
+		o[pi] = decDigitToB62(decv)
 		if d == 1 {
 			break
 		}
@@ -110,7 +110,7 @@ func B62EncodeFixed(n int64, places int) string {
 	if padLen > 0 {
 		pad := make([]byte, padLen)
 		for i := 0; i < padLen; i++ {
-			pad[i] = ZeroDigit
+			pad[i] = zeroDigit
 		}
 		o = string(pad) + o
 	}
@@ -122,7 +122,7 @@ func B62Decode(v string) int64 {
 	var o int64
 	var d int64 = 1
 	for pi := len(v) - 1; pi >= 0; pi-- {
-		o += (B62DigitToDec(v[pi]) * d)
+		o += (b62DigitToDec(v[pi]) * d)
 		d *= 62
 	}
 	return o

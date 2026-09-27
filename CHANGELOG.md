@@ -14,8 +14,7 @@ short-length fallback, and validation against `math/big` and fuzzing.
   for finer write ordering. Precision follows the platform clock: nanoseconds
   on Linux, microseconds on macOS, typically 100ns on Windows.
 - `TIMESTAMP_NANO_LEN` constant.
-- Base62 helpers: `B62Encode`, `B62EncodeSpec`, `IncrementB62`,
-  `DecDigitToB62`, `B62DigitToDec`, `ZeroDigit`.
+- `B62Encode(n)`: variable-length base62 encoding (no padding).
 - Package documentation, and a README covering the token layout, entropy, and
   a comparison with UUIDv7.
 

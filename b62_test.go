@@ -46,77 +46,77 @@ func TestB62EncProof(t *testing.T) {
 	// simply divide 3971 by divisor of position 3 (62*62)
 	// 3971/(62*62) = 1 (rounded down by int division in go)
 	assertEqual(t, 1, 3971/(62*62))
-	assertEqual(t, '1', DecDigitToB62(1))
+	assertEqual(t, '1', decDigitToB62(1))
 	// for 2nd position
 	// subtract decimal value of position 3 (1) times divisor (62*62)
 	// 3971 - (1*62*62) = 127
 	// then divide that remainder by divisor or position 2 (62)
 	// 127/(62) = 2 (rounded down by int division in go)
 	assertEqual(t, 2, (3971-(1*62*62))/(62))
-	assertEqual(t, '2', DecDigitToB62(2))
+	assertEqual(t, '2', decDigitToB62(2))
 	// for 1st position
 	// subtract decimal value of position 2 (2) times divisor (62)
 	// 127 - (2*62) = 3
 	assertEqual(t, 3, 127-(2*62))
-	assertEqual(t, '3', DecDigitToB62(3))
+	assertEqual(t, '3', decDigitToB62(3))
 }
 
 func TestDecDigitToB62(t *testing.T) {
-	assertEqual(t, '0', DecDigitToB62(0))
-	assertEqual(t, '1', DecDigitToB62(1))
-	assertEqual(t, 'A', DecDigitToB62(10))
-	assertEqual(t, 'Z', DecDigitToB62(35))
-	assertEqual(t, 'a', DecDigitToB62(36))
-	assertEqual(t, 'z', DecDigitToB62(61))
+	assertEqual(t, '0', decDigitToB62(0))
+	assertEqual(t, '1', decDigitToB62(1))
+	assertEqual(t, 'A', decDigitToB62(10))
+	assertEqual(t, 'Z', decDigitToB62(35))
+	assertEqual(t, 'a', decDigitToB62(36))
+	assertEqual(t, 'z', decDigitToB62(61))
 }
 
 func TestB62DigitToDec(t *testing.T) {
-	assertEqual(t, 0, B62DigitToDec('0'))
-	assertEqual(t, 1, B62DigitToDec('1'))
-	assertEqual(t, 10, B62DigitToDec('A'))
-	assertEqual(t, 35, B62DigitToDec('Z'))
-	assertEqual(t, 36, B62DigitToDec('a'))
-	assertEqual(t, 61, B62DigitToDec('z'))
+	assertEqual(t, 0, b62DigitToDec('0'))
+	assertEqual(t, 1, b62DigitToDec('1'))
+	assertEqual(t, 10, b62DigitToDec('A'))
+	assertEqual(t, 35, b62DigitToDec('Z'))
+	assertEqual(t, 36, b62DigitToDec('a'))
+	assertEqual(t, 61, b62DigitToDec('z'))
 }
 
 func TestIncrementB62(t *testing.T) {
-	assertEqual(t, "1", IncrementB62("0"))
-	assertEqual(t, "2", IncrementB62("1"))
-	assertEqual(t, "10", IncrementB62("z"))
-	assertEqual(t, "11", IncrementB62("10"))
-	assertEqual(t, "B0", IncrementB62("Az"))
-	assertEqual(t, "a0", IncrementB62("Zz"))
-	assertEqual(t, "x9", IncrementB62("x8"))
-	assertEqual(t, "100", IncrementB62("zz"))
-	assertEqual(t, "1000", IncrementB62("zzz"))
+	assertEqual(t, "1", incrementB62("0"))
+	assertEqual(t, "2", incrementB62("1"))
+	assertEqual(t, "10", incrementB62("z"))
+	assertEqual(t, "11", incrementB62("10"))
+	assertEqual(t, "B0", incrementB62("Az"))
+	assertEqual(t, "a0", incrementB62("Zz"))
+	assertEqual(t, "x9", incrementB62("x8"))
+	assertEqual(t, "100", incrementB62("zz"))
+	assertEqual(t, "1000", incrementB62("zzz"))
 }
 
 func TestB62EncodeSpec(t *testing.T) {
-	_, t0 := B62EncodeSpec(0) // "0"
+	_, t0 := b62EncodeSpec(0) // "0"
 	assertEqual(t, 1, t0)
-	_, t1 := B62EncodeSpec(1) // "1"
+	_, t1 := b62EncodeSpec(1) // "1"
 	assertEqual(t, 1, t1)
-	_, t61 := B62EncodeSpec(61) // "z"
+	_, t61 := b62EncodeSpec(61) // "z"
 	assertEqual(t, 1, t61)
-	_, t62 := B62EncodeSpec(62) // "10"
+	_, t62 := b62EncodeSpec(62) // "10"
 	assertEqual(t, 2, t62)
-	_, t63 := B62EncodeSpec(63) // "11"
+	_, t63 := b62EncodeSpec(63) // "11"
 	assertEqual(t, 2, t63)
-	_, t124 := B62EncodeSpec(124) // "20"
+	_, t124 := b62EncodeSpec(124) // "20"
 	assertEqual(t, 2, t124)
-	_, t3843 := B62EncodeSpec(3843) // "zz"
+	_, t3843 := b62EncodeSpec(3843) // "zz"
 	assertEqual(t, 2, t3843)
-	_, t3844 := B62EncodeSpec(3844) // "100"
+	_, t3844 := b62EncodeSpec(3844) // "100"
 	assertEqual(t, 3, t3844)
-	_, t238327 := B62EncodeSpec(238327) // "zzz"
+	_, t238327 := b62EncodeSpec(238327) // "zzz"
 	assertEqual(t, 3, t238327)
-	_, t238328 := B62EncodeSpec(238328) // "1000"
+	_, t238328 := b62EncodeSpec(238328) // "1000"
 	assertEqual(t, 4, t238328)
-	_, t62p10m1 := B62EncodeSpec(839299365868340223) // "zzzzzzzzzz"
+	_, t62p10m1 := b62EncodeSpec(839299365868340223) // "zzzzzzzzzz"
 	assertEqual(t, 10, t62p10m1)
-	_, t62p10 := B62EncodeSpec(839299365868340224) // "10000000000"
+	_, t62p10 := b62EncodeSpec(839299365868340224) // "10000000000"
 	assertEqual(t, 11, t62p10)
-	_, tmax := B62EncodeSpec(math.MaxInt64) // "AzL8n0Y58m7"
+	_, tmax := b62EncodeSpec(math.MaxInt64) // "AzL8n0Y58m7"
 	assertEqual(t, 11, tmax)
 }
 
