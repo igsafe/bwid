@@ -196,3 +196,44 @@ func TestGenerateBulkSeqTimestampedToken(t *testing.T) {
 		prevToken = token
 	}
 }
+
+func TestObjectIdTimeRoundTrip(t *testing.T) {
+	freezeClock(t, frozenAt)
+	want := frozenAt.UnixNano()
+	assertEqual(t, want, ObjectIdTime(GenerateObjectId()).UnixNano())
+	assertEqual(t, want, ObjectIdTime(GenerateTimestampedToken(13)).UnixNano())
+	assertEqual(t, want+1, ObjectIdTime(GenerateBulkSeqObjectId(5)[4]).UnixNano()) // batch takes the next ns
+}
+
+func TestObjectIdTimeRealClock(t *testing.T) {
+	before := time.Now().UnixNano()
+	id := GenerateObjectId()
+	after := time.Now().UnixNano()
+	got := ObjectIdTime(id).UnixNano()
+	if got < before || got > after {
+		t.Errorf("expected time between %d and %d, got %d", before, after, got)
+	}
+}
+
+func TestObjectIdTimeSecondsOnly(t *testing.T) {
+	sec := B62EncodeFixed(frozenAt.Unix(), TIMESTAMP_LEN)
+	want := frozenAt.Unix() * int64(time.Second)
+	// short token: no nanoseconds stored
+	assertEqual(t, want, ObjectIdTime(sec+"AbCdEf").UnixNano())
+	// 1.0.x ID whose random characters decode as out of range nanoseconds
+	assertEqual(t, want, ObjectIdTime(sec+"zzzzzz"+"AbCdEfGhIjKl").UnixNano())
+	// 1.0.x ID whose random characters happen to decode in range: the
+	// second is still right, the sub-second part is not (documented)
+	got := ObjectIdTime(sec + "000Abc" + "AbCdEfGhIjKl")
+	assertEqual(t, frozenAt.Unix(), got.Unix())
+}
+
+func TestObjectIdTimePanics(t *testing.T) {
+	sec := B62EncodeFixed(frozenAt.Unix(), TIMESTAMP_LEN)
+	assertPanics(t, func() { ObjectIdTime("") })
+	assertPanics(t, func() { ObjectIdTime("1xAv1") })
+	assertPanics(t, func() { ObjectIdTime("1xAv-A10Hqhcpx67H8f38d7r") })
+	assertPanics(t, func() { ObjectIdTime(sec + "10Hq-c" + "px67H8f38d7r") })
+	// characters after the timestamp aren't read, so aren't checked
+	assertEqual(t, frozenAt.Unix(), ObjectIdTime(sec+"------").Unix())
+}

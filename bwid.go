@@ -188,6 +188,50 @@ func GenerateObjectId() string {
 	return GenerateTimestampedToken(24)
 }
 
+// ObjectIdTime returns the creation time stored in an object ID, or in any
+// token from GenerateTimestampedToken or GenerateBulkSeqTimestampedToken.
+//
+// The seconds are always exact. Nanoseconds are included when the token has
+// them; precision follows the generating host's clock (see
+// TIMESTAMP_NANO_LEN). IDs from 1.0.x have random characters where the
+// nanoseconds would be; those almost always decode as out of range and are
+// ignored, but about 1 in 57 decodes as a valid value, giving a wrong time
+// within the correct second. The same applies to bulk tokens too short to
+// hold nanoseconds after their index digits.
+//
+// After a clock step backward, IDs keep the last timestamp until the clock
+// catches up (see GenerateTimestampedToken), so their stored time can be
+// briefly behind when they were really created.
+//
+// It panics if id is shorter than TIMESTAMP_LEN, or if the characters it
+// reads contain anything outside B62_DIGITS.
+func ObjectIdTime(id string) time.Time {
+	if len(id) < TIMESTAMP_LEN {
+		panic(fmt.Errorf("bwid: id %q is shorter than %d characters", id, TIMESTAMP_LEN))
+	}
+	stamp := id[:TIMESTAMP_LEN]
+	if len(id) > TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		stamp = id[:TIMESTAMP_LEN+TIMESTAMP_NANO_LEN]
+	}
+	for i := 0; i < len(stamp); i++ {
+		if !isB62(stamp[i]) {
+			panic(fmt.Errorf("bwid: id %q has non-base62 character %q", id, stamp[i]))
+		}
+	}
+	sec := B62Decode(id[:TIMESTAMP_LEN])
+	if len(stamp) > TIMESTAMP_LEN {
+		if nsec := B62Decode(stamp[TIMESTAMP_LEN:]); nsec < int64(time.Second) {
+			return time.Unix(sec, nsec)
+		}
+	}
+	return time.Unix(sec, 0)
+}
+
+// isB62 reports whether c is one of B62_DIGITS.
+func isB62(c byte) bool {
+	return '0' <= c && c <= '9' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z'
+}
+
 // GenerateBulkSeqTimestampedToken returns count tokens of length characters
 // that share one timestamp and sort in slice order. Each token is the
 // timestamp (as in GenerateTimestampedToken), then its index in
