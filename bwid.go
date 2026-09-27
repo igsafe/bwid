@@ -182,8 +182,9 @@ func GenerateTimestampedToken(length int) string {
 }
 
 // GenerateObjectId returns a 24-character timestamped token: 6 characters of
-// seconds, 6 of nanoseconds, and 12 random (about 71 bits). See
-// GenerateTimestampedToken.
+// seconds, 6 of nanoseconds, and 12 random (about 71 bits, or about 59 for an
+// ID made in the same clock tick as the previous one). Within one process,
+// each ID sorts after the previous one. See GenerateTimestampedToken.
 func GenerateObjectId() string {
 	return GenerateTimestampedToken(24)
 }

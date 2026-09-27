@@ -9,7 +9,7 @@ trade-offs are in `README.md`.
 ```sh
 gofmt -l .      # must print nothing
 go vet ./...
-go test ./...
+go test -race ./...
 # Linux (production target; macOS clocks are microsecond-only):
 docker run --rm -v "$PWD":/src -w /src golang:1.18 go test ./...
 # longer fuzz run:
@@ -31,7 +31,14 @@ go test -run '^$' -fuzz FuzzB62RoundTrip -fuzztime 1m .
   of nanoseconds when the length allows (13+), then random. Shorter lengths
   (7–12) fall back to the 1.0.x layout. Don't change this without a version
   plan.
-- Randomness must come from `crypto/rand`.
+- **In-process ordering is guaranteed** for 13+ character tokens: shared
+  state (`monotonic`, per length, behind one mutex) makes each token sort after
+  the last, with same-tick tokens bumping a 2-digit head and redrawing the
+  rest. Bulk batches share that state. Any change here must keep the lock and
+  the strict-ordering tests passing under `-race`. 7–12 character tokens stay
+  stateless and fully random.
+- Randomness must come from `crypto/rand`, uniformly (reject bytes >= 248,
+  never `% 62` alone).
 
 ## Tests
 
@@ -43,6 +50,11 @@ go test -run '^$' -fuzz FuzzB62RoundTrip -fuzztime 1m .
 - Base62 encoding is checked against `math/big` (with case swapped) and by
   `FuzzB62RoundTrip`.
 - Anything involving clock precision or ordering must be verified on Linux.
+- Time-dependent tests use `freezeClock(t, at)` (in `monotonic_test.go`),
+  which swaps the unexported `clock` and resets the monotonic state; frozen
+  times must be in the past so later real-clock tests aren't affected.
+- Concurrency tests must call the generators with no outer lock, or they
+  can't catch a missing lock. CI runs `go test -race`.
 
 ## Changes and releases
 
