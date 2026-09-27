@@ -1,3 +1,15 @@
+// Package bwid generates random and time-sortable tokens.
+//
+// Numbers are encoded in base62 using ASCII order—
+//
+//	0-9   = 0-9
+//	10-35 = A-Z
+//	36-61 = a-z
+//
+// This differs from math/big's Text(62), which puts lowercase letters before
+// uppercase. Using ASCII order means fixed-width encodings sort the same as
+// their numeric values under byte-wise comparison, e.g. Go string comparison
+// or MySQL's ascii_bin collation.
 package bwid
 
 import (
@@ -6,8 +18,7 @@ import (
 	"time"
 )
 
-// match sort order of
-// CHARACTER SET ascii COLLATE ascii_bin
+// base62 alphabet in ASCII order; see package doc
 const B62_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 // number of base62 digits required to hold timestamp prefixes

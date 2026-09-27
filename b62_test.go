@@ -1,13 +1,16 @@
 package bwid
 
 import (
+	"math"
+	"math/big"
+	"strings"
 	"testing"
 )
 
 func assertEqual[V comparable](t *testing.T, expected, got V) {
 	t.Helper()
 	if expected != got {
-		t.Fatalf("expected '%v' got '%v'", expected, got)
+		t.Errorf("expected '%v' got '%v'", expected, got)
 	}
 }
 
@@ -109,6 +112,12 @@ func TestB62EncodeSpec(t *testing.T) {
 	assertEqual(t, 3, t238327)
 	_, t238328 := B62EncodeSpec(238328) // "1000"
 	assertEqual(t, 4, t238328)
+	_, t62p10m1 := B62EncodeSpec(839299365868340223) // "zzzzzzzzzz"
+	assertEqual(t, 10, t62p10m1)
+	_, t62p10 := B62EncodeSpec(839299365868340224) // "10000000000"
+	assertEqual(t, 11, t62p10)
+	_, tmax := B62EncodeSpec(math.MaxInt64) // "AzL8n0Y58m7"
+	assertEqual(t, 11, tmax)
 }
 
 func TestB62Encode(t *testing.T) {
@@ -122,6 +131,55 @@ func TestB62Encode(t *testing.T) {
 	assertEqual(t, "100", B62Encode(3844))
 	assertEqual(t, "zzz", B62Encode(238327))
 	assertEqual(t, "1000", B62Encode(238328))
+	assertEqual(t, "zzzzzzzzzz", B62Encode(839299365868340223))
+	assertEqual(t, "10000000000", B62Encode(839299365868340224))
+	assertEqual(t, "AzL8n0Y58m7", B62Encode(math.MaxInt64))
+}
+
+// math/big uses 0-9a-zA-Z for base 62, so swap case
+// to compare against our 0-9A-Za-z alphabet
+func bigB62(n int64) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r - 'a' + 'A'
+		case r >= 'A' && r <= 'Z':
+			return r - 'A' + 'a'
+		}
+		return r
+	}, big.NewInt(n).Text(62))
+}
+
+func TestB62EncodeMatchesBig(t *testing.T) {
+	for n := int64(0); n < 250000; n++ {
+		assertEqual(t, bigB62(n), B62Encode(n))
+		if t.Failed() {
+			return
+		}
+	}
+	// then every power of 62 and its neighbours
+	for d := int64(62); d > 0 && d <= math.MaxInt64/62; d *= 62 {
+		for _, n := range []int64{d - 1, d, d + 1, d*62 - 1} {
+			assertEqual(t, bigB62(n), B62Encode(n))
+		}
+	}
+	assertEqual(t, bigB62(math.MaxInt64), B62Encode(math.MaxInt64))
+}
+
+func FuzzB62RoundTrip(f *testing.F) {
+	for _, n := range []int64{0, 1, 61, 62, 3843, 3844, 839299365868340224, math.MaxInt64} {
+		f.Add(n)
+	}
+	f.Fuzz(func(t *testing.T, n int64) {
+		if n < 0 {
+			t.Skip("negative values are not supported")
+		}
+		o := B62Encode(n)
+		assertEqual(t, bigB62(n), o)
+		assertEqual(t, B62Len(n), len(o))
+		assertEqual(t, n, B62Decode(o))
+		assertEqual(t, n, B62Decode(B62EncodeFixed(n, 12)))
+	})
 }
 
 func TestB62EncodeFixed(t *testing.T) {
@@ -137,6 +195,9 @@ func TestB62EncodeFixed(t *testing.T) {
 	assertEqual(t, "0000000100", B62EncodeFixed(3844, 10))
 	assertEqual(t, "0000000zzz", B62EncodeFixed(238327, 10))
 	assertEqual(t, "0000001000", B62EncodeFixed(238328, 10))
+	// too large for places, keep the lowest digits
+	assertEqual(t, "0", B62EncodeFixed(62, 1))
+	assertEqual(t, "000001", B62EncodeFixed(56800235585, 6))
 }
 
 func TestB62Decode(t *testing.T) {
@@ -151,4 +212,6 @@ func TestB62Decode(t *testing.T) {
 	assertEqual(t, 3844, B62Decode("100"))
 	assertEqual(t, 238327, B62Decode("zzz"))
 	assertEqual(t, 238328, B62Decode("01000"))
+	assertEqual(t, 56800235583, B62Decode("zzzzzz"))
+	assertEqual(t, math.MaxInt64, B62Decode("AzL8n0Y58m7"))
 }

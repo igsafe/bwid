@@ -1,9 +1,6 @@
-package bwid
+// base62 encoding helpers; see package doc in bwid.go for the alphabet
 
-// Use base62 for storing numbers according to definition on Wikipedia
-// 0-9 = 0-9
-// 10-35 = A-Z
-// 36-61 = a-z
+package bwid
 
 const ZeroDigit = byte(48)
 
@@ -62,24 +59,20 @@ func IncrementB62(v string) string {
 	return string(v2[1:])
 }
 
-// Get highest place divisor and total number of places
-// for a B62 encoding
+// B62EncodeSpec returns the highest place divisor d and the
+// total number of places pt for the base62 encoding of n.
 func B62EncodeSpec(n int64) (d int64, pt int) {
-	d = 1  // position 1 divisor 62
-	pt = 1 // total places 2
-	for {
-		d2 := d * 62
-		if n >= d2 {
-			d = d2
-			pt++
-			continue
-		}
-		return // highest position divisor, total places
+	d = 1
+	pt = 1
+	// d <= n/62 avoids overflowing d*62
+	for d <= n/62 {
+		d *= 62
+		pt++
 	}
+	return
 }
 
-// for backward compatibility
-// Calculate number of places/digits required to hold n
+// B62Len returns the number of base62 digits required to hold n.
 func B62Len(n int64) int {
 	_, pt := B62EncodeSpec(n)
 	return pt
@@ -106,9 +99,14 @@ func B62Encode(n int64) string {
 
 // Encode to base62 with a fixed number of digits
 // (useful for alpha sorts)
+// values too large for places are truncated to the
+// lowest places digits, as in 1.0.x
 func B62EncodeFixed(n int64, places int) string {
 	o := B62Encode(n)
 	padLen := places - len(o)
+	if padLen < 0 {
+		return o[-padLen:]
+	}
 	if padLen > 0 {
 		pad := make([]byte, padLen)
 		for i := 0; i < padLen; i++ {
