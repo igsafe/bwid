@@ -136,13 +136,9 @@ func TestGenerateTimestampedToken(t *testing.T) {
 		if t.Failed() {
 			return
 		}
+		// no sleep needed: same-tick tokens are ordered by the monotonic
+		// head, even on macOS's microsecond clock
 		prevToken = token
-		// because the string is random after the timestamp,
-		// make sure the timestamp increments at least one microsecond
-		// so order check does not fail on the randomness alone
-		// (microseconds, not nanoseconds, because that's the macOS
-		// wall clock resolution)
-		time.Sleep(time.Microsecond)
 	}
 }
 
