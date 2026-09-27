@@ -175,19 +175,41 @@ func GenerateObjectId() string {
 // timestamp (as in GenerateTimestampedToken), then its index in
 // B62Len(count) base62 digits, then random characters.
 //
-// The nanoseconds are omitted when length leaves no room for them after the
-// index digits. It panics if length is less than
+// Batches share ordering with GenerateTimestampedToken of the same length:
+// within one process, a batch sorts after every token issued before it, and
+// tokens issued after it sort after the whole batch. If the clock hasn't
+// moved past the last token issued, the batch uses the nanosecond after it.
+//
+// The nanoseconds, and the ordering guarantee, are omitted when length leaves
+// no room for them after the index digits. It panics if length is less than
 // TIMESTAMP_LEN+B62Len(count)+1. count must not be negative.
 func GenerateBulkSeqTimestampedToken(count int64, length int) []string {
 	ilen := B62Len(count)
 	if length < TIMESTAMP_LEN+ilen+1 {
 		panic(fmt.Errorf("minimum timestamped token length for %d count is %d", count, (TIMESTAMP_LEN + ilen + 1)))
 	}
-	p := timestampPrefix(time.Now(), length-ilen)
+	room := length - ilen
+	var p string
+	if room <= TIMESTAMP_LEN+TIMESTAMP_NANO_LEN {
+		// seconds-only layout: stateless, as in 1.0.x
+		p = timestampPrefix(clock(), room)
+	} else {
+		monotonic.Lock()
+		defer monotonic.Unlock()
+		p = timestampPrefix(clock(), room)
+		if last, ok := monotonic.last[length]; ok && p <= last[:len(p)] {
+			// not past the last token: take the next nanosecond, so every
+			// token in the batch sorts after it
+			p = nextTick(last[:len(p)])
+		}
+	}
 	tlen := length - len(p) - ilen
 	o := make([]string, count)
 	for i := int64(0); i < count; i++ {
 		o[i] = p + B62EncodeFixed(i, ilen) + GenerateToken(tlen)
+	}
+	if count > 0 && len(p) > TIMESTAMP_LEN {
+		monotonic.last[length] = o[count-1]
 	}
 	return o
 }

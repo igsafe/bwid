@@ -210,3 +210,87 @@ func TestMonotonicRealClock(t *testing.T) {
 		prev = id
 	}
 }
+
+func TestBulkSharesOrderWithSingles(t *testing.T) {
+	freezeClock(t, frozenAt)
+	single := GenerateObjectId()
+	batch := GenerateBulkSeqObjectId(100)
+	// same tick as the single: the batch takes the next nanosecond
+	assertEqual(t, nextTick(single[:12]), batch[0][:12])
+	assertGte(t, batch[0], single)
+	if !sort.StringsAreSorted(batch) {
+		t.Fatal("batch not sorted")
+	}
+	// and the next single sorts after the whole batch
+	after := GenerateObjectId()
+	if after <= batch[len(batch)-1] {
+		t.Fatalf("single %q does not sort after batch end %q", after, batch[len(batch)-1])
+	}
+}
+
+func TestBulkBatchesSameTick(t *testing.T) {
+	freezeClock(t, frozenAt)
+	first := GenerateBulkSeqObjectId(100)
+	second := GenerateBulkSeqObjectId(3)
+	if second[0] <= first[len(first)-1] {
+		t.Fatalf("second batch %q does not sort after first batch end %q", second[0], first[len(first)-1])
+	}
+}
+
+func TestBulkUsesClockWhenPastLast(t *testing.T) {
+	freezeClock(t, frozenAt)
+	GenerateBulkSeqObjectId(100)
+	later := frozenAt.Add(time.Second)
+	clock = func() time.Time { return later }
+	batch := GenerateBulkSeqObjectId(100)
+	assertEqual(t, timestampPrefix(later, 24-B62Len(100)), batch[0][:12])
+}
+
+func TestBulkEmptyAndShortStateless(t *testing.T) {
+	freezeClock(t, frozenAt)
+	assertEqual(t, 0, len(GenerateBulkSeqObjectId(0)))
+	if _, ok := monotonic.last[24]; ok {
+		t.Error("an empty batch should not record state")
+	}
+	// seconds-only layout (no room for nanoseconds after 2 index digits)
+	short := TIMESTAMP_LEN + 2 + 1
+	GenerateBulkSeqTimestampedToken(100, short)
+	if _, ok := monotonic.last[short]; ok {
+		t.Errorf("length %d batches should not keep monotonic state", short)
+	}
+}
+
+func TestMonotonicConcurrentMixed(t *testing.T) {
+	// singles and batches from many goroutines at once: each goroutine's
+	// IDs, in the order it received them, are strictly increasing, and all
+	// IDs are unique
+	const workers, rounds = 20, 500
+	results := make([][]string, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			var ids []string
+			for i := 0; i < rounds; i++ {
+				ids = append(ids, GenerateObjectId())
+				ids = append(ids, GenerateBulkSeqObjectId(10)...)
+			}
+			results[w] = ids
+		}(w)
+	}
+	wg.Wait()
+	seen := map[string]bool{}
+	for w, ids := range results {
+		for i, id := range ids {
+			if i > 0 && id <= ids[i-1] {
+				t.Fatalf("goroutine %d: not increasing: %q after %q", w, id, ids[i-1])
+			}
+			if seen[id] {
+				t.Fatalf("duplicate %q", id)
+			}
+			seen[id] = true
+		}
+	}
+	assertEqual(t, workers*rounds*11, len(seen))
+}
