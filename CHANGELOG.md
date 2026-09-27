@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.0 (unreleased)
+## 1.2.0 (2026-09-27)
 
 Backward compatible: no signatures change, and the token layout is the same
 as 1.1.0.
