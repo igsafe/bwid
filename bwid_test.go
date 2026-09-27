@@ -61,6 +61,36 @@ func TestGenerateTokenLen(t *testing.T) {
 	assertEqual(t, 24, len(token))
 }
 
+func TestGenerateTokenLengths(t *testing.T) {
+	for _, length := range []int{0, 1, 22, 1000} {
+		assertB62Token(t, GenerateToken(length), length)
+	}
+}
+
+func TestAppendB62Uniform(t *testing.T) {
+	// feed every possible byte value once
+	src := make([]byte, 256)
+	for i := range src {
+		src[i] = byte(i)
+	}
+	out := appendB62Uniform(nil, src, 1000)
+	// 248-255 are rejected
+	assertEqual(t, 248, len(out))
+	// every character comes from exactly 4 byte values
+	counts := map[byte]int{}
+	for _, c := range out {
+		counts[c]++
+	}
+	assertEqual(t, 62, len(counts))
+	for i := 0; i < len(B62_DIGITS); i++ {
+		assertEqual(t, 4, counts[B62_DIGITS[i]])
+	}
+	// stops at max, and appends to what's already there
+	assertEqual(t, "ab0123", string(appendB62Uniform([]byte("ab"), src, 6)))
+	// all-rejected input adds nothing
+	assertEqual(t, "", string(appendB62Uniform(nil, []byte{248, 255}, 10)))
+}
+
 func TestGenerateTimestampedTokenLen(t *testing.T) {
 	token := GenerateTimestampedToken(24)
 	log.Printf("GenerateTimestampedToken(24) %s", token)

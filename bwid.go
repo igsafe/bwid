@@ -44,16 +44,34 @@ const TIMESTAMP_NANO_LEN = 6
 // 22 characters gives about 131 bits of randomness. It panics if crypto/rand
 // fails.
 func GenerateToken(length int) string {
-	b := make([]byte, length)
-	// never fails on Go 1.24+, but can on older versions if the OS
-	// random source is unavailable; never return non-random tokens
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Errorf("bwid: crypto/rand failed: %w", err))
+	o := make([]byte, 0, length)
+	// ~3% of bytes are rejected, so a little extra usually fills it in one read
+	buf := make([]byte, length+length/16+4)
+	for len(o) < length {
+		// never fails on Go 1.24+, but can on older versions if the OS
+		// random source is unavailable; never return non-random tokens
+		if _, err := rand.Read(buf); err != nil {
+			panic(fmt.Errorf("bwid: crypto/rand failed: %w", err))
+		}
+		o = appendB62Uniform(o, buf, length)
 	}
-	for i := 0; i < length; i++ {
-		b[i] = B62_DIGITS[int(b[i])%62]
+	return string(o)
+}
+
+// appendB62Uniform appends base62 characters from random bytes in src to dst,
+// up to max total. Bytes 248-255 are skipped: 248 is 4*62, so every character
+// comes from exactly 4 byte values and all 62 are equally likely. (Using
+// every byte with %62 would make 0-7 slightly more likely than the rest.)
+func appendB62Uniform(dst, src []byte, max int) []byte {
+	for _, b := range src {
+		if len(dst) == max {
+			break
+		}
+		if b < 248 {
+			dst = append(dst, B62_DIGITS[b%62])
+		}
 	}
-	return string(b)
+	return dst
 }
 
 // timestampPrefix encodes now as seconds, followed by nanoseconds when
