@@ -7,7 +7,7 @@ package bwid
 
 const ZeroDigit = byte(48)
 
-func DecDigitToB62(d uint64) byte {
+func DecDigitToB62(d int64) byte {
 	// 0-9
 	if d < 10 {
 		return byte(d + 48)
@@ -20,17 +20,17 @@ func DecDigitToB62(d uint64) byte {
 	return byte(d + 61)
 }
 
-func B62DigitToDec(b byte) uint64 {
+func B62DigitToDec(b byte) int64 {
 	// 0-9
 	if b < 58 {
-		return uint64(b - 48)
+		return int64(b) - 48
 	}
 	// A-Z
 	if b < 91 {
-		return uint64(b - 55)
+		return int64(b) - 55
 	}
 	// a-z
-	return uint64(b - 61)
+	return int64(b) - 61
 }
 
 // Increment a Base62 number by 1
@@ -64,7 +64,7 @@ func IncrementB62(v string) string {
 
 // Get highest place divisor and total number of places
 // for a B62 encoding
-func B62EncodeSpec(n uint64) (d uint64, pt uint64) {
+func B62EncodeSpec(n int64) (d int64, pt int) {
 	d = 1  // position 1 divisor 62
 	pt = 1 // total places 2
 	for {
@@ -80,14 +80,14 @@ func B62EncodeSpec(n uint64) (d uint64, pt uint64) {
 
 // for backward compatibility
 // Calculate number of places/digits required to hold n
-func B62Len(n uint64) uint64 {
+func B62Len(n int64) int {
 	_, pt := B62EncodeSpec(n)
 	return pt
 }
 
 // Encode to base62
 // See also math proofs in b62_test.go
-func B62Encode(n uint64) string {
+func B62Encode(n int64) string {
 	d, pt := B62EncodeSpec(n)
 	o := make([]byte, pt)
 	pi := 0 // place idx
@@ -106,12 +106,12 @@ func B62Encode(n uint64) string {
 
 // Encode to base62 with a fixed number of digits
 // (useful for alpha sorts)
-func B62EncodeFixed(n uint64, places uint64) string {
+func B62EncodeFixed(n int64, places int) string {
 	o := B62Encode(n)
-	padLen := places - uint64(len(o))
+	padLen := places - len(o)
 	if padLen > 0 {
 		pad := make([]byte, padLen)
-		for i := uint64(0); i < padLen; i++ {
+		for i := 0; i < padLen; i++ {
 			pad[i] = ZeroDigit
 		}
 		o = string(pad) + o
@@ -120,9 +120,9 @@ func B62EncodeFixed(n uint64, places uint64) string {
 }
 
 // Decode from base62
-func B62Decode(v string) uint64 {
-	var o uint64
-	var d uint64 = 1
+func B62Decode(v string) int64 {
+	var o int64
+	var d int64 = 1
 	for pi := len(v) - 1; pi >= 0; pi-- {
 		o += (B62DigitToDec(v[pi]) * d)
 		d *= 62
