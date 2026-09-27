@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.0 (unreleased)
+## 1.1.0 (2026-09-27)
 
 Backward compatible: every 1.0.x function keeps its signature and accepts the
 same lengths.
