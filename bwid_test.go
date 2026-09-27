@@ -2,65 +2,100 @@ package bwid
 
 import (
 	"log"
-	"strings"
 	"testing"
+	"time"
 )
+
+func extractBsec(token string) string {
+	return token[:TIMESTAMP_LEN]
+}
+
+func extractBmic(token string) string {
+	return token[TIMESTAMP_LEN : TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN]
+}
+
+func extractBorder(token string, digits uint64) string {
+	return token[TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN : TIMESTAMP_LEN+TIMESTAMP_MICRO_LEN+digits]
+}
+
+func assertTimestampedTokenIsNow(t *testing.T, token string) {
+	t.Helper()
+	now := time.Now().Format("2006-01-02T15:04")
+	dsec := B62Decode(token[:TIMESTAMP_LEN])
+	tokenTime := time.Unix(int64(dsec), 0)
+	assertEqual(t, tokenTime.Format("2006-01-02T15:04"), now)
+}
+
+func assertGte(t *testing.T, expectedGte, expectedLt string) {
+	t.Helper()
+	if expectedGte < expectedLt {
+		t.Fatalf("expected '%v' >= '%v'", expectedGte, expectedLt)
+	}
+}
+
+func assertTimestampedTokenOrder(t *testing.T, nextToken string, prevToken string) {
+	t.Helper()
+	assertGte(t, nextToken, prevToken)
+	if extractBsec(nextToken) == extractBsec(prevToken) {
+		// ensure microseconds are sequential
+		assertGte(t, extractBmic(nextToken), extractBmic(prevToken))
+	}
+}
+
+func TestUnixTimestampLen(t *testing.T) {
+	// we won't need more digits for a while.  3000 AD, still good!
+	d1 := B62Len(uint64(time.Now().Unix()))
+	d2 := B62Len(uint64(time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
+	assertEqual(t, d1, d2)
+	// 2287 AD no bueno!
+	d3 := B62Len(uint64(time.Date(4000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()))
+	assertEqual(t, d2+1, d3)
+}
 
 func TestGenerateTokenLen(t *testing.T) {
 	token := GenerateToken(24)
 	log.Printf("GenerateToken(24) %s", token)
-	if len(token) != 24 {
-		t.Fatalf("Expected length 24, got %d", len(token))
-	}
+	assertEqual(t, 24, len(token))
 }
 
-func TestGenerateTimestampedTokenLen1(t *testing.T) {
+func TestGenerateTimestampedTokenLen(t *testing.T) {
 	token := GenerateTimestampedToken(24)
 	log.Printf("GenerateTimestampedToken(24) %s", token)
-	if len(token) != 24 {
-		t.Fatalf("Expected length 24, got %d", len(token))
-	}
+	assertEqual(t, 24, len(token))
 }
 
-func TestGenerateTimestampedTokenLen2(t *testing.T) {
-	token := GenerateTimestampedToken(40)
-	log.Printf("GenerateTimestampedToken(40) %s", token)
-	if len(token) != 40 {
-		t.Fatalf("Expected length 40, got %d", len(token))
-	}
-}
-
-func TestGenerateObjectIdLen(t *testing.T) {
-	token := GenerateObjectId()
-	log.Printf("GenerateObjectId() %s", token)
-	if len(token) != 24 {
-		t.Fatalf("Expected length 24, got %d", len(token))
-	}
-}
-
-func TestGenerateBulkSeqTimestampedTokenLen(t *testing.T) {
-	var count int64 = 100000
-	var tokenLen = 40
-	tokens := GenerateBulkSeqTimestampedToken(count, 40)
-	if int64(len(tokens)) != count {
-		t.Fatalf("Expected %d tokens, got %d", count, len(tokens))
-	}
-	log.Printf("GenerateBulkSeqTimestampedToken(n, 40) %s", tokens[0])
-	for _, token := range tokens {
-		if len(token) != tokenLen {
-			t.Fatalf("Expected token length %d for %s", tokenLen, token)
-		}
-	}
-}
-
-func TestGenerateBulkSeqTimestampedTokenSeq(t *testing.T) {
-	tokens := GenerateBulkSeqTimestampedToken(100000, 40)
+func TestGenerateTimestampedToken(t *testing.T) {
 	var prevToken string
-	log.Printf("GenerateBulkSeqTimestampedToken(n, 40) %s", tokens[0])
-	for _, token := range tokens {
-		if strings.Compare(prevToken, token) != -1 {
-			t.Fatalf("Generated out of sequence tokens: '%s' '%s'", prevToken, token)
+	for i := 0; i < 100000; i++ {
+		token := GenerateTimestampedToken(24)
+		assertTimestampedTokenIsNow(t, token)
+		if prevToken != "" {
+			assertTimestampedTokenOrder(t, token, prevToken)
 		}
+		prevToken = token
+		// because the string is random after the timestamp,
+		// make sure the timestamp increments at least one microsecond
+		// so order check does not fail on the randomness alone
+		time.Sleep(time.Microsecond)
+	}
+}
+
+func TestGenerateBulkSeqTimestampedToken(t *testing.T) {
+	var count uint = 100000
+	var tokenLen uint = 40
+	tokens := GenerateBulkSeqTimestampedToken(count, tokenLen)
+	log.Printf("GenerateBulkSeqTimestampedToken(n, %d)[0] %s", tokenLen, tokens[0])
+	assertEqual(t, uint(len(tokens)), count)
+	var prevToken string
+	orderDigits := B62Len(uint64(count))
+	for i, token := range tokens {
+		assertEqual(t, uint(len(token)), tokenLen)
+		assertTimestampedTokenIsNow(t, token)
+		if prevToken != "" {
+			assertTimestampedTokenOrder(t, token, prevToken)
+		}
+		tokenI := B62Decode(extractBorder(token, orderDigits))
+		assertEqual(t, uint64(i), tokenI)
 		prevToken = token
 	}
 }
