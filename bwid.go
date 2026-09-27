@@ -18,15 +18,16 @@ import (
 	"time"
 )
 
-// base62 alphabet in ASCII order; see package doc
+// B62_DIGITS is the base62 alphabet, in ASCII order; see the package doc.
 const B62_DIGITS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// number of base62 digits required to hold timestamp prefixes
-// (6 digits holds unix seconds until the year 3769)
+// TIMESTAMP_LEN is the number of base62 digits of Unix seconds at the start
+// of every timestamped token (6 digits holds seconds until the year 3769).
 const TIMESTAMP_LEN = 6
 
-// number of base62 digits for the sub-second part of the timestamp
-// (6 digits holds 0-999999999 nanoseconds)
+// TIMESTAMP_NANO_LEN is the number of base62 digits of nanoseconds that
+// follow the seconds, when the token is long enough (6 digits holds
+// 0-999999999).
 //
 // new in 1.1.0— resolution depends on the platform's wall clock—
 //   - Linux: true nanoseconds
@@ -37,6 +38,10 @@ const TIMESTAMP_LEN = 6
 // hosts still sort together; only the precision of the ordering differs.
 const TIMESTAMP_NANO_LEN = 6
 
+// GenerateToken returns length random base62 characters from crypto/rand,
+// with no timestamp. Use it for secrets such as API keys or unlisted links;
+// 22 characters gives about 131 bits of randomness. It panics if crypto/rand
+// fails.
 func GenerateToken(length int) string {
 	b := make([]byte, length)
 	// never fails on Go 1.24+, but can on older versions if the OS
@@ -62,6 +67,13 @@ func timestampPrefix(now time.Time, room int) string {
 	return p
 }
 
+// GenerateTimestampedToken returns a token of length characters that sorts
+// by creation time: TIMESTAMP_LEN digits of Unix seconds, then
+// TIMESTAMP_NANO_LEN digits of nanoseconds, then random characters.
+//
+// Lengths shorter than TIMESTAMP_LEN+TIMESTAMP_NANO_LEN+1 (13) omit the
+// nanoseconds, as in 1.0.x. It panics if length is less than
+// TIMESTAMP_LEN+1 (7).
 func GenerateTimestampedToken(length int) string {
 	if length < TIMESTAMP_LEN+1 {
 		panic(fmt.Errorf("minimum timestamped token length is %d", TIMESTAMP_LEN+1))
@@ -70,10 +82,21 @@ func GenerateTimestampedToken(length int) string {
 	return p + GenerateToken(length-len(p))
 }
 
+// GenerateObjectId returns a 24-character timestamped token: 6 characters of
+// seconds, 6 of nanoseconds, and 12 random (about 71 bits). See
+// GenerateTimestampedToken.
 func GenerateObjectId() string {
 	return GenerateTimestampedToken(24)
 }
 
+// GenerateBulkSeqTimestampedToken returns count tokens of length characters
+// that share one timestamp and sort in slice order. Each token is the
+// timestamp (as in GenerateTimestampedToken), then its index in
+// B62Len(count) base62 digits, then random characters.
+//
+// The nanoseconds are omitted when length leaves no room for them after the
+// index digits. It panics if length is less than
+// TIMESTAMP_LEN+B62Len(count)+1. count must not be negative.
 func GenerateBulkSeqTimestampedToken(count int64, length int) []string {
 	ilen := B62Len(count)
 	if length < TIMESTAMP_LEN+ilen+1 {
@@ -88,6 +111,8 @@ func GenerateBulkSeqTimestampedToken(count int64, length int) []string {
 	return o
 }
 
+// GenerateBulkSeqObjectId returns count 24-character object IDs that share
+// one timestamp and sort in slice order. See GenerateBulkSeqTimestampedToken.
 func GenerateBulkSeqObjectId(count int64) []string {
 	return GenerateBulkSeqTimestampedToken(count, 24)
 }

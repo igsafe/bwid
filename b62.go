@@ -73,13 +73,14 @@ func b62EncodeSpec(n int64) (d int64, pt int) {
 }
 
 // B62Len returns the number of base62 digits required to hold n.
+// n must not be negative.
 func B62Len(n int64) int {
 	_, pt := b62EncodeSpec(n)
 	return pt
 }
 
-// Encode to base62
-// See also math proofs in b62_test.go
+// B62Encode returns n in base62 with no padding, e.g. 62 is "10".
+// n must not be negative. See also the worked example in b62_test.go.
 func B62Encode(n int64) string {
 	d, pt := b62EncodeSpec(n)
 	o := make([]byte, pt)
@@ -97,10 +98,10 @@ func B62Encode(n int64) string {
 	return string(o)
 }
 
-// Encode to base62 with a fixed number of digits
-// (useful for alpha sorts)
-// values too large for places are truncated to the
-// lowest places digits, as in 1.0.x
+// B62EncodeFixed returns n in base62, left-padded with zeros to exactly
+// places digits, so values sort correctly as strings. Values too large for
+// places keep only their lowest places digits, as in 1.0.x.
+// n must not be negative.
 func B62EncodeFixed(n int64, places int) string {
 	o := B62Encode(n)
 	padLen := places - len(o)
@@ -117,7 +118,9 @@ func B62EncodeFixed(n int64, places int) string {
 	return o
 }
 
-// Decode from base62
+// B62Decode returns the value of the base62 string v. Leading zeros are
+// ignored. v must contain only B62_DIGITS characters and fit in an int64;
+// other input returns an unspecified value.
 func B62Decode(v string) int64 {
 	var o int64
 	var d int64 = 1
